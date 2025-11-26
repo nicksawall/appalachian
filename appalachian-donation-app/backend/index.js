@@ -10,7 +10,7 @@ app.use(express.json());
 
 // In-memory mile data for now.
 // Later you can move this to Postgres / Firebase.
-let mileMarkers = Array.from({ length: 20 }).map((_, i) => ({
+let mileMarkers = Array.from({ length: 2200 }).map((_, i) => ({
   id: i + 1,           // unique ID
   mile: i + 1,         // mile number
   lat: 35.0 + i * 0.01,  // fake coordinates for demo
