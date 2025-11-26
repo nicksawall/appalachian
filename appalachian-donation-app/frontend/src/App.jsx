@@ -5,7 +5,14 @@ import L from 'leaflet';
 
 const API_BASE = 'https://appalachian.onrender.com';
 
-// Simple icons for available vs donated
+// IW-ish palette
+const IW_RED = '#b22222';
+const IW_RED_DARK = '#8e1a1a';
+const IW_CHARCOAL = '#111827';
+const IW_SAND = '#f5f1e7';
+const IW_BORDER = '#1f2933';
+
+// Marker icons
 const availableIcon = new L.Icon({
   iconUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png',
   iconSize: [25, 41],
@@ -21,337 +28,314 @@ const donatedIcon = new L.Icon({
 
 function App() {
   const [mileMarkers, setMileMarkers] = useState([]);
-  const [selectedMarker, setSelectedMarker] = useState(null);
-
-  // Modal donation state
-  const [donorName, setDonorName] = useState('');
-  const [amount, setAmount] = useState('');
-  const [message, setMessage] = useState('');
-  const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
-
-  // Unassigned donation state
-  const [uDonorName, setUDonorName] = useState('');
-  const [uAmount, setUAmount] = useState('');
-  const [uMessage, setUMessage] = useState('');
-  const [uSubmitting, setUSubmitting] = useState(false);
-  const [uError, setUError] = useState('');
-  const [uSuccess, setUSuccess] = useState('');
+  const [loading, setLoading] = useState(true);
 
   // Load markers from backend
   useEffect(() => {
-    fetch(`${API_BASE}/api/milemarkers`)
-      .then(res => res.json())
-      .then(data => setMileMarkers(data))
-      .catch(err => {
-        console.error(err);
-        setError('Failed to load mile markers');
-      });
-  }, []);
-
-  const handleMarkerClick = (marker) => {
-    setSelectedMarker(marker);
-    setDonorName('');
-    setAmount('');
-    setMessage('');
-    setError('');
-  };
-
-  const handleDonate = async (e) => {
-    e.preventDefault();
-    if (!selectedMarker) return;
-
-    setSubmitting(true);
-    setError('');
-
-    try {
-      const res = await fetch(
-        `${API_BASE}/api/milemarkers/${selectedMarker.id}/donate`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            donorName,
-            amount: Number(amount),
-            message,
-          }),
+    async function loadMarkers() {
+      try {
+        const res = await fetch(`${API_BASE}/api/milemarkers`);
+        if (!res.ok) {
+          throw new Error(`Failed to load mile markers: ${res.status}`);
         }
-      );
-
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        throw new Error(data.error || 'Donation failed');
+        const data = await res.json();
+        setMileMarkers(data);
+      } catch (err) {
+        console.error(err);
+        setError(err.message || 'Failed to load mile markers');
+      } finally {
+        setLoading(false);
       }
-
-      const updatedMarker = await res.json();
-
-      // Update markers in state so the pin turns green
-      setMileMarkers(prev =>
-        prev.map(m => (m.id === updatedMarker.id ? updatedMarker : m))
-      );
-
-      // Close modal
-      setSelectedMarker(null);
-    } catch (err) {
-      console.error(err);
-      setError(err.message || 'Something went wrong');
-    } finally {
-      setSubmitting(false);
     }
-  };
 
-  const handleUnassignedDonate = async (e) => {
-    e.preventDefault();
-    setUSubmitting(true);
-    setUError('');
-    setUSuccess('');
-
-    try {
-      const res = await fetch(`${API_BASE}/api/donate-unassigned`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          donorName: uDonorName,
-          amount: Number(uAmount),
-          message: uMessage,
-        }),
-      });
-
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        throw new Error(data.error || 'Unassigned donation failed');
-      }
-
-      const updatedMarker = await res.json();
-
-      // Update state
-      setMileMarkers(prev =>
-        prev.map(m => (m.id === updatedMarker.id ? updatedMarker : m))
-      );
-
-      setUSuccess(`Thank you! You sponsored mile ${updatedMarker.mile}.`);
-      setUDonorName('');
-      setUAmount('');
-      setUMessage('');
-    } catch (err) {
-      console.error(err);
-      setUError(err.message || 'Something went wrong');
-    } finally {
-      setUSubmitting(false);
-    }
-  };
-
-  const center = [35.0, -83.0]; // starting view
+    loadMarkers();
+  }, []);
 
   const donatedCount = mileMarkers.filter(m => m.status === 'donated').length;
   const totalCount = mileMarkers.length;
 
-  return (
-    <div style={{ height: '100vh', display: 'flex', flexDirection: 'column' }}>
-      <header style={{ padding: '0.75rem 1rem', borderBottom: '1px solid #ddd' }}>
-        <h1 style={{ margin: '0 0 0.25rem 0' }}>Appalachian Trail Mile Sponsorship</h1>
-        <p style={{ margin: '0 0 0.75rem 0' }}>
-          Click a mile marker to sponsor it, or use the form below to sponsor the
-          lowest-numbered available mile automatically. Green = already sponsored.
-        </p>
+  // Rough center of the AT corridor
+  const center = [39.0, -77.5];
 
+  const totalPotential = totalCount * (totalCount + 1) / 2; // sum 1..N
+
+  return (
+    <div
+      style={{
+        height: '100vh',
+        display: 'flex',
+        flexDirection: 'column',
+        background: IW_CHARCOAL,
+        color: '#f9fafb',
+        fontFamily:
+          'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      }}
+    >
+      {/* Top bar */}
+      <header
+        style={{
+          padding: '0.75rem 1rem 0.5rem',
+          borderBottom: `1px solid ${IW_BORDER}`,
+          background: IW_CHARCOAL,
+          position: 'relative',
+          zIndex: 1000,
+        }}
+      >
         <div
           style={{
-            marginBottom: '0.75rem',
-            fontSize: '0.9rem',
+            borderLeft: `4px solid ${IW_RED}`,
+            paddingLeft: '0.75rem',
           }}
         >
-          Progress: {donatedCount} / {totalCount} miles sponsored
+          <h1
+            style={{
+              margin: 0,
+              fontSize: '1.1rem',
+              textTransform: 'uppercase',
+              letterSpacing: '0.08em',
+            }}
+          >
+            Irreverent Warriors Appalachian Trail Fundraiser
+          </h1>
+          <p
+            style={{
+              margin: '0.35rem 0 0.15rem',
+              fontSize: '0.85rem',
+              color: '#e5e7eb',
+              maxWidth: '60rem',
+            }}
+          >
+            Each mile has a target donation equal to its mile number
+            (mile 37 → $37). Donations are pulled live from the
+            Irreverent Warriors DonorDrive event and plotted along
+            the Appalachian Trail.
+          </p>
         </div>
 
-        {/* Unassigned donation form */}
-        <form
-          onSubmit={handleUnassignedDonate}
-          style={{
-            display: 'flex',
-            flexWrap: 'wrap',
-            gap: '0.5rem',
-            alignItems: 'flex-end',
-            marginBottom: '0.5rem',
-          }}
-        >
-          <div style={{ minWidth: '150px' }}>
-            <label style={{ fontSize: '0.85rem' }}>
-              Name (optional)
-              <input
-                type="text"
-                value={uDonorName}
-                onChange={e => setUDonorName(e.target.value)}
-                style={{ width: '100%', padding: '0.25rem' }}
-              />
-            </label>
-          </div>
-          <div style={{ minWidth: '120px' }}>
-            <label style={{ fontSize: '0.85rem' }}>
-              Amount (USD)
-              <input
-                type="number"
-                min="1"
-                step="1"
-                required
-                value={uAmount}
-                onChange={e => setUAmount(e.target.value)}
-                style={{ width: '100%', padding: '0.25rem' }}
-              />
-            </label>
-          </div>
-          <div style={{ flex: 1, minWidth: '180px' }}>
-            <label style={{ fontSize: '0.85rem' }}>
-              Message (optional)
-              <input
-                type="text"
-                value={uMessage}
-                onChange={e => setUMessage(e.target.value)}
-                style={{ width: '100%', padding: '0.25rem' }}
-              />
-            </label>
-          </div>
-          <div>
-            <button type="submit" disabled={uSubmitting}>
-              {uSubmitting ? 'Sponsoring…' : 'Sponsor Next Available Mile'}
-            </button>
-          </div>
-        </form>
-        {uError && (
-          <div style={{ color: 'red', fontSize: '0.85rem', marginBottom: '0.25rem' }}>
-            {uError}
-          </div>
-        )}
-        {uSuccess && (
-          <div style={{ color: 'green', fontSize: '0.85rem', marginBottom: '0.25rem' }}>
-            {uSuccess}
-          </div>
-        )}
-      </header>
-
-      <div style={{ flex: 1 }}>
-        <MapContainer
-          center={center}
-          zoom={8}
-          style={{ height: '100%', width: '100%' }}
-        >
-          <TileLayer
-            attribution='&copy; OpenStreetMap contributors'
-            url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-          />
-
-          {mileMarkers.map(marker => (
-            <Marker
-              key={marker.id}
-              position={[marker.lat, marker.lng]}
-              icon={marker.status === 'donated' ? donatedIcon : availableIcon}
-              eventHandlers={{
-                click: () => handleMarkerClick(marker),
-              }}
-            >
-              <Popup>
-                <div>
-                  <strong>Mile {marker.mile}</strong>
-                  <br />
-                  Status:{' '}
-                  {marker.status === 'donated'
-                    ? `Donated by ${marker.donorName || 'Anonymous'}`
-                    : 'Available'}
-                </div>
-              </Popup>
-            </Marker>
-          ))}
-        </MapContainer>
-      </div>
-
-      {/* Donation Modal for specific mile */}
-      {selectedMarker && (
+        {/* Stats / progress strip */}
         <div
           style={{
-            position: 'fixed',
-            inset: 0,
-            background: 'rgba(0,0,0,0.4)',
+            marginTop: '0.6rem',
             display: 'flex',
+            flexWrap: 'wrap',
+            gap: '0.75rem',
             alignItems: 'center',
-            justifyContent: 'center',
+            fontSize: '0.82rem',
           }}
-          onClick={() => setSelectedMarker(null)}
         >
           <div
             style={{
-              background: '#fff',
-              padding: '1.5rem',
-              borderRadius: '8px',
-              width: '100%',
-              maxWidth: '400px',
+              padding: '0.35rem 0.65rem',
+              borderRadius: '999px',
+              background: '#1f2937',
+              border: `1px solid ${IW_BORDER}`,
             }}
-            onClick={e => e.stopPropagation()}
           >
-            <h2>Sponsor Mile {selectedMarker.mile}</h2>
-            <form onSubmit={handleDonate}>
-              <div style={{ marginBottom: '0.75rem' }}>
-                <label>
-                  Name (optional)
-                  <input
-                    type="text"
-                    value={donorName}
-                    onChange={e => setDonorName(e.target.value)}
-                    style={{ width: '100%', padding: '0.25rem' }}
-                  />
-                </label>
-              </div>
-              <div style={{ marginBottom: '0.75rem' }}>
-                <label>
-                  Amount (USD)
-                  <input
-                    type="number"
-                    min="1"
-                    step="1"
-                    required
-                    value={amount}
-                    onChange={e => setAmount(e.target.value)}
-                    style={{ width: '100%', padding: '0.25rem' }}
-                  />
-                </label>
-              </div>
-              <div style={{ marginBottom: '0.75rem' }}>
-                <label>
-                  Message (optional)
-                  <textarea
-                    value={message}
-                    onChange={e => setMessage(e.target.value)}
-                    rows={3}
-                    style={{ width: '100%', padding: '0.25rem' }}
-                  />
-                </label>
-              </div>
-              {error && (
-                <div style={{ color: 'red', marginBottom: '0.75rem' }}>
-                  {error}
-                </div>
-              )}
-              <div
-                style={{
-                  display: 'flex',
-                  justifyContent: 'flex-end',
-                  gap: '0.5rem',
-                }}
-              >
-                <button
-                  type="button"
-                  onClick={() => setSelectedMarker(null)}
-                  disabled={submitting}
-                >
-                  Cancel
-                </button>
-                <button type="submit" disabled={submitting}>
-                  {submitting ? 'Processing…' : 'Donate'}
-                </button>
-              </div>
-            </form>
+            Miles sponsored:{' '}
+            <strong style={{ color: IW_SAND }}>{donatedCount}</strong> /{' '}
+            {totalCount || '…'}
+          </div>
+
+          <div
+            style={{
+              padding: '0.35rem 0.65rem',
+              borderRadius: '999px',
+              background: '#111827',
+              border: `1px solid ${IW_BORDER}`,
+              color: '#d1d5db',
+            }}
+          >
+            Potential if every mile is filled:{' '}
+            <strong style={{ color: IW_SAND }}>
+              ${totalPotential.toLocaleString()}
+            </strong>
+          </div>
+
+          <div
+            style={{
+              padding: '0.35rem 0.65rem',
+              borderRadius: '999px',
+              background: '#111827',
+              border: `1px solid ${IW_BORDER}`,
+              color: '#9ca3af',
+            }}
+          >
+            To sponsor a mile, donate that dollar amount on DonorDrive
+            (for example, $10 for mile 10, $2200 for mile 2200).
           </div>
         </div>
-      )}
+      </header>
+
+      {/* Content / map area */}
+      <div style={{ flex: 1, padding: '0.75rem' }}>
+        {loading && (
+          <div
+            style={{
+              padding: '1rem',
+              background: '#111827',
+              borderRadius: '0.5rem',
+              border: `1px solid ${IW_BORDER}`,
+              fontSize: '0.9rem',
+            }}
+          >
+            Loading mile markers…
+          </div>
+        )}
+
+        {error && !loading && (
+          <div
+            style={{
+              padding: '1rem',
+              background: '#7f1d1d',
+              borderRadius: '0.5rem',
+              border: `1px solid ${IW_RED_DARK}`,
+              fontSize: '0.9rem',
+            }}
+          >
+            {error}
+          </div>
+        )}
+
+        {!loading && !error && (
+          <div
+            style={{
+              height: '100%',
+              borderRadius: '0.75rem',
+              overflow: 'hidden',
+              boxShadow: '0 10px 30px rgba(0,0,0,0.35)',
+              border: `1px solid ${IW_BORDER}`,
+              background: IW_SAND,
+            }}
+          >
+            <MapContainer
+              center={center}
+              zoom={6}
+              style={{ height: '100%', width: '100%' }}
+            >
+              <TileLayer
+                attribution='&copy; OpenStreetMap contributors'
+                url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+              />
+
+              {mileMarkers.map(marker => {
+                const isDonated = marker.status === 'donated';
+                const targetAmount = marker.mile;
+                const expressDonateLink = `https://irreverentwarriors.donordrive.com/index.cfm?fuseaction=donate.event&eventID=644&donationAmount=${marker.mile}#donate`;
+
+                return (
+                  <Marker
+                    key={marker.id}
+                    position={[marker.lat, marker.lng]}
+                    icon={isDonated ? donatedIcon : availableIcon}
+                  >
+                    <Popup>
+                      <div
+                        style={{
+                          fontSize: '0.9rem',
+                          minWidth: '190px',
+                          maxWidth: '260px',
+                          color: '#111827',
+                        }}
+                      >
+                        <div
+                          style={{
+                            borderLeft: `3px solid ${IW_RED}`,
+                            paddingLeft: '0.5rem',
+                            marginBottom: '0.35rem',
+                          }}
+                        >
+                          <div
+                            style={{
+                              fontWeight: 700,
+                              textTransform: 'uppercase',
+                              letterSpacing: '0.06em',
+                              fontSize: '0.78rem',
+                              color: IW_RED_DARK,
+                            }}
+                          >
+                            Mile {marker.mile}
+                          </div>
+                          <div
+                            style={{
+                              fontSize: '0.8rem',
+                              color: '#4b5563',
+                            }}
+                          >
+                            Target amount: $
+                            {targetAmount.toLocaleString()}
+                          </div>
+                        </div>
+
+                        <div
+                          style={{
+                            marginTop: '0.15rem',
+                            fontSize: '0.82rem',
+                          }}
+                        >
+                          Status:{' '}
+                          {isDonated ? (
+                            <span>
+                              <strong>Sponsored</strong>
+                              {marker.amount && (
+                                <>
+                                  {' '}
+                                  (${marker.amount.toLocaleString()})
+                                </>
+                              )}
+                              {marker.donorName && (
+                                <> by {marker.donorName}</>
+                              )}
+                            </span>
+                          ) : (
+                            <span>Available</span>
+                          )}
+                        </div>
+
+                        {marker.message && (
+                          <div
+                            style={{
+                              marginTop: '0.45rem',
+                              fontStyle: 'italic',
+                              fontSize: '0.8rem',
+                              color: '#4b5563',
+                            }}
+                          >
+                            “{marker.message}”
+                          </div>
+                        )}
+
+                        <div style={{ marginTop: '0.7rem' }}>
+                          <a
+                            href={expressDonateLink}
+                            target="_top"
+                            rel="noopener noreferrer"
+                            style={{
+                              display: 'inline-block',
+                              padding: '0.4rem 0.85rem',
+                              borderRadius: '999px',
+                              border: `1px solid ${IW_RED_DARK}`,
+                              background: IW_RED,
+                              color: '#f9fafb',
+                              textDecoration: 'none',
+                              fontSize: '0.8rem',
+                              fontWeight: 600,
+                              textTransform: 'uppercase',
+                              letterSpacing: '0.08em',
+                            }}
+                          >
+                            Donate for Mile {marker.mile}
+                          </a>
+                        </div>
+                      </div>
+                    </Popup>
+                  </Marker>
+                );
+              })}
+            </MapContainer>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
