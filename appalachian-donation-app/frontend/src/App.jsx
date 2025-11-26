@@ -1,11 +1,11 @@
 // frontend/src/App.jsx
-import 'leaflet-gesture-handling/dist/leaflet-gesture-handling.css';
-import { GestureHandling } from 'leaflet-gesture-handling';
 import { useEffect, useState } from 'react';
 import { MapContainer, TileLayer, Marker, Popup } from 'react-leaflet';
 import L from 'leaflet';
-L.Map.addInitHook('addHandler', 'gestureHandling', GestureHandling);
+import 'leaflet-gesture-handling/dist/leaflet-gesture-handling.css';
+import { GestureHandling } from 'leaflet-gesture-handling';
 
+L.Map.addInitHook('addHandler', 'gestureHandling', GestureHandling);
 
 const API_BASE = 'https://appalachian.onrender.com';
 
@@ -216,8 +216,8 @@ function App() {
               center={center}
               zoom={6}
               style={{ height: '100%', width: '100%' }}
-                scrollWheelZoom={false}
-                gestureHandling={true}
+              scrollWheelZoom={false}
+              gestureHandling={true}
             >
               <TileLayer
                 attribution='&copy; OpenStreetMap contributors'
@@ -251,26 +251,26 @@ function App() {
                             marginBottom: '0.35rem',
                           }}
                         >
-                          <div
-                            style={{
-                              fontWeight: 700,
-                              textTransform: 'uppercase',
-                              letterSpacing: '0.06em',
-                              fontSize: '0.78rem',
-                              color: IW_RED_DARK,
-                            }}
-                          >
-                            Mile {marker.mile}
-                          </div>
-                          <div
-                            style={{
-                              fontSize: '0.8rem',
-                              color: '#4b5563',
-                            }}
-                          >
-                            Target amount: $
-                            {targetAmount.toLocaleString()}
-                          </div>
+                            <div
+                              style={{
+                                fontWeight: 700,
+                                textTransform: 'uppercase',
+                                letterSpacing: '0.06em',
+                                fontSize: '0.78rem',
+                                color: IW_RED_DARK,
+                              }}
+                            >
+                              Mile {marker.mile}
+                            </div>
+                            <div
+                              style={{
+                                fontSize: '0.8rem',
+                                color: '#4b5563',
+                              }}
+                            >
+                              Target amount: $
+                              {targetAmount.toLocaleString()}
+                            </div>
                         </div>
 
                         <div
