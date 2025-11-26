@@ -72,6 +72,7 @@ let mileMarkers = Array.from({ length: TOTAL_MILES }).map((_, i) => {
     lat,
     lng,
     status: 'available', // 'available' | 'donated'
+    coverageType: null,       // 'direct' | 'pooled' | null
     donorName: null,
     amount: null,
     message: null,
@@ -96,7 +97,6 @@ async function syncFromDonorDrive() {
     console.log('Syncing from DonorDrive...');
     const url = `${DONORDRIVE_BASE}/api/events/${EVENT_ID}/donations`;
 
-    // Make sure your Render Node runtime is >= 18 so global fetch exists.
     const res = await fetch(url);
     if (!res.ok) {
       console.error('DonorDrive API error:', res.status, res.statusText);
@@ -105,55 +105,89 @@ async function syncFromDonorDrive() {
 
     const donations = await res.json();
 
-    // Reset all miles to available
-    mileMarkers = mileMarkers.map(m => ({
-      ...m,
-      status: 'available',
-      donorName: null,
-      amount: null,
-      message: null,
-    }));
+    // 1) Compute total raised (pooling all donations)
+    const totalRaised = donations.reduce((sum, d) => {
+      const amt = Number(d.amount);
+      return sum + (Number.isFinite(amt) ? amt : 0);
+    }, 0);
 
-    // Oldest donations claim miles first
-    donations.sort((a, b) => {
+    console.log(`Total raised: $${totalRaised.toFixed(2)}`);
+
+    // 2) How many miles can the pool fully fund?
+    // Find largest N such that 1 + 2 + ... + N <= totalRaised
+    let fundedMiles = 0;
+    let neededForNext = 1; // cost of mile 1, then 2, etc.
+    let remaining = totalRaised;
+
+    while (fundedMiles < TOTAL_MILES && remaining >= neededForNext) {
+      remaining -= neededForNext;
+      fundedMiles++;
+      neededForNext = fundedMiles + 1; // cost of the next mile
+    }
+
+    console.log(`Pooled coverage: miles 1..${fundedMiles}`);
+
+    // 3) Find first exact-amount donation for each rounded amount
+    // amount -> donation
+    const directByAmount = new Map();
+
+    // Sort all donations by date so earliest gets priority
+    const sorted = [...donations].sort((a, b) => {
       const da = new Date(a.createdDateUTC || a.createdDate || 0);
       const db = new Date(b.createdDateUTC || b.createdDate || 0);
       return da - db;
     });
 
-    for (const d of donations) {
-      const amountNum = Number(d.amount);
-      if (!amountNum || !Number.isFinite(amountNum)) continue;
-
-      // $ amount -> mile number (rounded)
-      const mileNumber = Math.round(amountNum);
-
-      if (mileNumber < 1 || mileNumber > TOTAL_MILES) {
-        console.log(
-          `Skipping donation $${amountNum} (outside 1..${TOTAL_MILES})`
-        );
-        continue;
+    for (const d of sorted) {
+      const amt = Math.round(Number(d.amount));
+      if (!Number.isFinite(amt)) continue;
+      if (amt < 1 || amt > TOTAL_MILES) continue;
+      if (!directByAmount.has(amt)) {
+        directByAmount.set(amt, d);
       }
-
-      const idx = mileNumber - 1;
-
-      if (mileMarkers[idx].status === 'donated') {
-        console.log(
-          `Mile ${mileNumber} already taken, skipping donation $${amountNum}`
-        );
-        continue;
-      }
-
-      mileMarkers[idx] = {
-        ...mileMarkers[idx],
-        status: 'donated',
-        donorName: d.displayName || d.donorName || null,
-        amount: amountNum,
-        message: d.message || null,
-      };
     }
 
-    console.log('DonorDrive sync complete.');
+    // 4) Reset and rebuild mileMarkers with coverageType
+    mileMarkers = mileMarkers.map((m, idx) => {
+      const mile = idx + 1;
+      const directDonation = directByAmount.get(mile);
+
+      if (directDonation) {
+        const amountNum = Math.round(Number(directDonation.amount) || mile);
+        return {
+          ...m,
+          status: 'donated',
+          coverageType: 'direct',
+          donorName: directDonation.displayName || directDonation.donorName || null,
+          amount: amountNum,
+          message: directDonation.message || null,
+        };
+      }
+
+      if (mile <= fundedMiles) {
+        // covered by pooled donations only
+        return {
+          ...m,
+          status: 'donated',
+          coverageType: 'pooled',
+          donorName: null,
+          amount: null,
+          message: null,
+        };
+      }
+
+      // not yet funded at all
+      return {
+        ...m,
+        status: 'available',
+        coverageType: null,
+        donorName: null,
+        amount: null,
+        message: null,
+      };
+    });
+
+    console.log('DonorDrive hybrid (direct + pooled) sync complete.');
   } catch (err) {
     console.error('Error syncing from DonorDrive:', err);
   }
