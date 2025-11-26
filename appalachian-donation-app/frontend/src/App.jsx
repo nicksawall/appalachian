@@ -273,30 +273,35 @@ function App() {
                             </div>
                         </div>
 
-                        <div
-                          style={{
-                            marginTop: '0.15rem',
-                            fontSize: '0.82rem',
-                          }}
-                        >
-                          Status:{' '}
-                          {isDonated ? (
-                            <span>
-                              <strong>Sponsored</strong>
-                              {marker.amount && (
-                                <>
-                                  {' '}
-                                  (${marker.amount.toLocaleString()})
-                                </>
-                              )}
-                              {marker.donorName && (
-                                <> by {marker.donorName}</>
-                              )}
-                            </span>
-                          ) : (
-                            <span>Available</span>
-                          )}
-                        </div>
+                     <div
+  style={{
+    marginTop: '0.15rem',
+    fontSize: '0.82rem',
+  }}
+>
+  Status:{' '}
+  {marker.status !== 'donated' && <span>Available</span>}
+
+  {marker.status === 'donated' && marker.coverageType === 'direct' && (
+    <span>
+      <strong>Sponsored</strong>
+      {marker.amount && (
+        <> (${marker.amount.toLocaleString()})</>
+      )}
+      {marker.donorName && <> by {marker.donorName}</>}
+    </span>
+  )}
+
+  {marker.status === 'donated' && marker.coverageType === 'pooled' && (
+    <span>
+      Covered by pooled donations so far.
+      {' '}
+      You can still become the named sponsor with a donation of $
+      {marker.mile.toLocaleString()}.
+    </span>
+  )}
+</div>
+
 
                         {marker.message && (
                           <div
