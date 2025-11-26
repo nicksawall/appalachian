@@ -6,50 +6,97 @@ const app = express();
 const PORT = process.env.PORT || 4000;
 
 // ===== DonorDrive config =====
-// Your IW DonorDrive instance and event
 const DONORDRIVE_BASE = 'https://irreverentwarriors.donordrive.com';
 const EVENT_ID = 644;
 
-// How many miles you want on the map.
-// 2,200 miles roughly matches the AT, and
-// with your scheme (mile N = $N donation), the max raise is ~2.42M.
+// How many miles / markers to display
 const TOTAL_MILES = 2200;
 
+// ===== Approximate Appalachian Trail polyline =====
+// Key control points from south (Springer) to north (Katahdin).
+// These are approximate but follow the real AT corridor.
+const AT_CONTROL_POINTS = [
+  // Springer Mountain, GA (southern terminus)
+  { lat: 34.6266, lng: -84.1937 }, // Springer Mountain summit :contentReference[oaicite:6]{index=6}
+
+  // Great Smoky Mountains / Clingmans Dome region
+  { lat: 35.5639, lng: -83.4640 }, // near Clingmans Dome area :contentReference[oaicite:7]{index=7}
+
+  // Central Virginia (Blue Ridge area)
+  { lat: 37.3959, lng: -79.8583 }, // Roanoke-ish / Blue Ridge region :contentReference[oaicite:8]{index=8}
+
+  // Pennsylvania AT "halfway" sign (Michaux State Forest)
+  { lat: 40.0366, lng: -77.3573 }, // AT halfway marker coordinates :contentReference[oaicite:9]{index=9}
+
+  // New Jersey / New York border area
+  { lat: 41.1860, lng: -74.9177 }, // Delaware Water Gap / NJ–NY region :contentReference[oaicite:10]{index=10}
+
+  // New Hampshire / White Mountains (approx)
+  { lat: 43.8, lng: -71.5 }, // rough Whites / NH interior
+
+  // Katahdin / Baxter Peak, ME (northern terminus)
+  { lat: 45.9043, lng: -68.9214 }, // Baxter Peak coordinates :contentReference[oaicite:11]{index=11}
+];
+
+// Helper: interpolate along the AT_CONTROL_POINTS polyline
+function getLatLngForMile(mile) {
+  // Normalize mile (1..TOTAL_MILES) to t in [0, 1]
+  const t = (mile - 1) / (TOTAL_MILES - 1);
+  const segmentCount = AT_CONTROL_POINTS.length - 1;
+  const segFrac = 1 / segmentCount;
+
+  // Which segment are we on?
+  let segIndex = Math.floor(t / segFrac);
+  if (segIndex >= segmentCount) segIndex = segmentCount - 1;
+
+  // Local t within that segment
+  const t0 = segFrac * segIndex;
+  const localT = (t - t0) / segFrac;
+
+  const p0 = AT_CONTROL_POINTS[segIndex];
+  const p1 = AT_CONTROL_POINTS[segIndex + 1];
+
+  const lat = p0.lat + (p1.lat - p0.lat) * localT;
+  const lng = p0.lng + (p1.lng - p0.lng) * localT;
+
+  return { lat, lng };
+}
+
 // ===== In-memory mile data =====
-// This is what the frontend reads from /api/milemarkers
-let mileMarkers = Array.from({ length: TOTAL_MILES }).map((_, i) => ({
-  id: i + 1,
-  mile: i + 1,
-  // TEMP: fake coordinates forming a diagonal line.
-  // Later we can replace these with real AT coordinates along a GPX line.
-  lat: 35.0 + i * 0.001,
-  lng: -83.0 + i * 0.001,
-  status: 'available', // 'available' | 'donated'
-  donorName: null,
-  amount: null,
-  message: null,
-}));
+let mileMarkers = Array.from({ length: TOTAL_MILES }).map((_, i) => {
+  const mile = i + 1;
+  const { lat, lng } = getLatLngForMile(mile);
+  return {
+    id: mile,
+    mile,
+    lat,
+    lng,
+    status: 'available', // 'available' | 'donated'
+    donorName: null,
+    amount: null,
+    message: null,
+  };
+});
 
 app.use(cors());
 app.use(express.json());
 
 // ===== DonorDrive sync logic =====
 //
-// For this event, each donation's DOLLAR AMOUNT maps directly to a mile:
+// Each donation's dollar AMOUNT maps directly to a mile number:
 //   $1    -> mile 1
 //   $10   -> mile 10
 //   $2200 -> mile 2200
 //
-// If two different donations have the same amount, the first one in time
-// wins that mile; later ones for that exact amount are skipped.
+// If multiple donations have the same amount, the earliest one
+// gets that mile and later ones for that amount are skipped.
 
 async function syncFromDonorDrive() {
   try {
     console.log('Syncing from DonorDrive...');
     const url = `${DONORDRIVE_BASE}/api/events/${EVENT_ID}/donations`;
 
-    // Node 18+ supports global fetch. Make sure your Render service
-    // is using Node 18 or 20 in the settings.
+    // Make sure your Render Node runtime is >= 18 so global fetch exists.
     const res = await fetch(url);
     if (!res.ok) {
       console.error('DonorDrive API error:', res.status, res.statusText);
@@ -58,7 +105,7 @@ async function syncFromDonorDrive() {
 
     const donations = await res.json();
 
-    // Reset all miles to available before re-assigning from scratch
+    // Reset all miles to available
     mileMarkers = mileMarkers.map(m => ({
       ...m,
       status: 'available',
@@ -67,7 +114,7 @@ async function syncFromDonorDrive() {
       message: null,
     }));
 
-    // Sort donations by createdDate so earlier donations claim miles first
+    // Oldest donations claim miles first
     donations.sort((a, b) => {
       const da = new Date(a.createdDateUTC || a.createdDate || 0);
       const db = new Date(b.createdDateUTC || b.createdDate || 0);
@@ -78,11 +125,9 @@ async function syncFromDonorDrive() {
       const amountNum = Number(d.amount);
       if (!amountNum || !Number.isFinite(amountNum)) continue;
 
-      // Map donation $ amount to a mile number.
-      // You can switch to Math.floor or Math.ceil if you prefer.
+      // $ amount -> mile number (rounded)
       const mileNumber = Math.round(amountNum);
 
-      // Ignore weird amounts outside our mile range
       if (mileNumber < 1 || mileNumber > TOTAL_MILES) {
         console.log(
           `Skipping donation $${amountNum} (outside 1..${TOTAL_MILES})`
@@ -93,7 +138,6 @@ async function syncFromDonorDrive() {
       const idx = mileNumber - 1;
 
       if (mileMarkers[idx].status === 'donated') {
-        // Mile already claimed by an earlier donation of the same amount.
         console.log(
           `Mile ${mileNumber} already taken, skipping donation $${amountNum}`
         );
@@ -117,12 +161,12 @@ async function syncFromDonorDrive() {
 
 // ===== API endpoints =====
 
-// Frontend calls this to render the map
+// Frontend uses this to render markers on the map
 app.get('/api/milemarkers', (req, res) => {
   res.json(mileMarkers);
 });
 
-// Simple healthcheck for debugging / Render
+// Simple healthcheck
 app.get('/api/healthz', (req, res) => {
   res.json({
     status: 'ok',
@@ -134,9 +178,8 @@ app.get('/api/healthz', (req, res) => {
 // ===== Startup =====
 app.listen(PORT, () => {
   console.log(`Backend API running on port ${PORT}`);
-  // Initial sync on startup
+  // Initial sync
   syncFromDonorDrive();
-  // Refresh every 60 seconds. DonorDrive recommends not hitting them
-  // more often than about once every 15 seconds; this is very conservative.
+  // Refresh every 60 seconds
   setInterval(syncFromDonorDrive, 60 * 1000);
 });
