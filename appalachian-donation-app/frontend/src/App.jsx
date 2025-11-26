@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react';
 import { MapContainer, TileLayer, Marker, Popup } from 'react-leaflet';
 import L from 'leaflet';
 
-const API_BASE = 'http://localhost:4000';
+const API_BASE = 'https://appalachian.onrender.com';
 
 // Simple icons for available vs donated
 const availableIcon = new L.Icon({
